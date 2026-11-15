@@ -1,0 +1,15 @@
+{
+  "name": "dalin-mini-apps-sales-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/index.js",
+    "notion:setup": "node --env-file-if-exists=.env src/notion-setup.js",
+    "test": "node --test",
+    "telegram:ids": "node --env-file-if-exists=.env src/telegram-ids.js"
+  }
+}
