@@ -6,6 +6,7 @@ import { openStore } from './store.js';
 import { notionClient, staffdayTrialClient, telegramClient } from './clients.js';
 import { createBot } from './bot.js';
 import { poll, worker } from './runtime.js';
+import { catalogHandler } from './catalog-http.js';
 
 async function start() {
   const config = loadConfig();
@@ -20,7 +21,9 @@ async function start() {
   const bot = createBot(store, config);
   const abort = new AbortController();
   const { signal } = abort;
-  const server = createServer((req, res) => {
+  const catalog = catalogHandler({ config, bot });
+  const server = createServer({requestTimeout: 15_000}, (req, res) => {
+    if (catalog && req.url?.startsWith('/catalog/')) return void catalog(req, res);
     const health = req.method === 'GET' && req.url === '/health';
     res.writeHead(health ? (signal.aborted ? 503 : 200) : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(health ? { ok: !signal.aborted } : { error: 'not_found' }));

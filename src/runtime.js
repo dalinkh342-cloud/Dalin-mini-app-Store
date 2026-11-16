@@ -80,7 +80,12 @@ export async function runJob({ store, bot, telegram, notion, staffdayTrial, conf
   try {
     const validOrder = !payload.pendingOrder || store.get('orders', payload.pendingOrder)?.status === 'pending';
     if (type === 'telegram' && validOrder && (!payload.condition || conditionMatches(store, payload.condition, now()))) {
-      await telegram(payload.method, payload.body, { timeout: 8000 });
+      try {
+        await telegram(payload.method, payload.body, { timeout: 8000 });
+      } catch (error) {
+        if (payload.method !== 'sendPhoto' || !payload.fallback || ![400, 413].includes(error.status)) throw error;
+        await telegram('sendMessage', payload.fallback, { timeout: 8000 });
+      }
     }
     if (type === 'notion') await syncNotion(notion, store, config.sources, payload);
     if (type === 'staffday') {
