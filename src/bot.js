@@ -1,5 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { DAY, formattedDate, localDateEnd, positiveInteger } from './config.js';
+import { canChooseTrialHr, handleTrialHr, hrChoiceButtons, preparingTrial } from './trial-approval.js';
 
 const PRODUCTS = {
   staffday: { name: 'StaffDay', prefix: 'SD', details: 'កត់វត្តមានតាមទីតាំង ស្នើសុំឈប់សម្រាក និងទាញរបាយការណ៍ HR។' },
@@ -68,7 +69,7 @@ export function createBot(store, config, clock = Date.now) {
     lead.trialEnd, condition);
   }
 
-  function processCustomer({ user, input, data, say, now }) {
+  function processCustomer({ user, profile, input, data, say, now }) {
     const draft = store.get('drafts', user);
     const setDraft = fields => store.save('drafts', { id: user, ...fields }, now);
     const menu = () => say('សួស្តី! សូមជ្រើសកម្មវិធីសម្រាប់ការងារប្រចាំថ្ងៃរបស់អ្នក។', [
@@ -91,17 +92,21 @@ export function createBot(store, config, clock = Date.now) {
     };
     const showLead = lead => {
       const end = lead.stage === 'trial' && lead.trialEnd < now ? ' · ដល់ថ្ងៃផុតកំណត់' : '';
-      const message = label(lead) + '\n' + STAGES[lead.stage] + end +
+      const stage = preparingTrial(lead) ? 'កំពុងបើក Trial' :
+        lead.trialHrConfirmed && lead.stage === 'ready' ? 'រង់ចាំអនុម័ត Trial' : STAGES[lead.stage];
+      const message = label(lead) + '\n' + stage + end +
         (lead.companyCode ? '\nCompany Code: ' + lead.companyCode : '') +
         (lead.stage === 'trial' ? '\nTrial ផុតកំណត់: ' + formattedDate(lead.trialEnd) : '') +
         (lead.stage === 'active' ? '\nបន្តមុន: ' + formattedDate(lead.paidUntil) : '');
       const buttons = [];
+      if (config.trialApi && canChooseTrialHr(lead)) buttons.push(...hrChoiceButtons(lead.id));
       if (staffdayButtons(lead)) buttons.push([link('បើក StaffDay', config.staffdayUrl)]);
       if (lead.companyCode && lead.stage !== 'closed') buttons.push([callback('ស្នើបន្តប្រើ', 'renew:' + lead.id)]);
       if (lead.stage !== 'closed') buttons.push([callback('សុំជំនួយ', 'help:' + lead.id)]);
       return say(message, buttons);
     };
 
+    if (handleTrialHr({store, config, saveLead, queueTelegram, user, profile, data, input, say, now})) return;
     if (/^\/start(?:\s|$)/.test(input)) {
       store.forget('drafts', user);
       const payload = input.split(/\s+/, 2)[1] || '';
@@ -135,6 +140,10 @@ export function createBot(store, config, clock = Date.now) {
         buyer: user, count: draft.count, source: draft.source, stage: 'new', created: now,
       }, {}, user, now);
       setDraft({ step: 'confirmed', nonce: draft.nonce, leadId: lead.id });
+      if (config.trialApi) {
+        if (!canChooseTrialHr(lead)) return showLead(lead);
+        return say('បានទទួលសំណើ ' + lead.id + '។ តើអ្នកជាអ្នកគ្រប់គ្រង StaffDay (HR) សម្រាប់ក្រុមហ៊ុននេះឬ?', hrChoiceButtons(lead.id));
+      }
       if (!duplicate) {
         queueTelegram('new:' + lead.id, 'sendMessage', {
           chat_id: config.salesChat,
@@ -174,7 +183,9 @@ export function createBot(store, config, clock = Date.now) {
     }
     if (!input || input.startsWith('/')) return menu();
     if (draft?.step === 'company') {
-      if (input.length < 2 || input.length > 90) return say('សូមបញ្ចូលឈ្មោះក្រុមហ៊ុនពី ២ ដល់ ៩០ តួអក្សរ។');
+      if (input.length < 2 || input.length > 90 || /[\u0000-\u001f\u007f]/u.test(input)) {
+        return say('សូមបញ្ចូលឈ្មោះក្រុមហ៊ុនមួយបន្ទាត់ ពី ២ ដល់ ៩០ តួអក្សរ។');
+      }
       setDraft({ ...draft, company: input, step: 'count' });
       return say('តើមានបុគ្គលិកប៉ុន្មាននាក់ដែលនឹងប្រើ StaffDay?');
     }
@@ -226,6 +237,20 @@ export function createBot(store, config, clock = Date.now) {
     const owner = config.owners.has(user);
     const allowed = owner || config.sellers.has(user);
     if (!allowed) return;
+    const approval = /^approve-trial:(SD-\d+)$/.exec(data || '');
+    if (approval) {
+      if (!owner) return say('សកម្មភាពនេះសម្រាប់ Owner។');
+      if (!config.trialApi) return say('សូមភ្ជាប់ប្រព័ន្ធ StaffDay មុនបើក Trial។');
+      const lead = store.get('leads', approval[1]);
+      if (!lead?.trialHrConfirmed) return say('សំណើនេះកំពុងរង់ចាំ HR។');
+      if (lead.stage === 'trial') return say('Trial បានបើករួច · ' + label(lead));
+      if (preparingTrial(lead)) return say('បានអនុម័តរួច កំពុងបើក Trial · ' + label(lead));
+      if (lead.stage !== 'ready') return say('សំណើនេះមិនស្ថិតក្នុងដំណាក់កាលអនុម័តទៀតទេ។');
+      const staffdayRequestId = randomBytes(16).toString('hex');
+      saveLead(lead, {staffdayRequestId, approvedBy:user, assigned:lead.assigned || user}, user, now);
+      store.queue('staffday', 'staffday:trial:' + lead.id, {leadId:lead.id, staffdayRequestId, trialDays:config.trialDays}, now);
+      return say('បានអនុម័ត · ' + label(lead) + '។ Bot កំពុងបង្កើតក្រុមហ៊ុន និងផ្តល់សិទ្ធិ HR។');
+    }
     const [command, rawId, ...args] = input.split(/\s+/);
     const id = (data?.startsWith('claim:') ? data.split(':')[1] : rawId || '').toUpperCase();
     const action = data?.startsWith('claim:') ? '/claim' : command?.split('@')[0];
@@ -236,6 +261,7 @@ export function createBot(store, config, clock = Date.now) {
     const replyToBuyer = (key, text, buyer = lead.buyer) => dueMessage(key, buyer, text, now);
 
     if (action === '/saleshelp') return say([
+      ...(config.trialApi ? ['ចុច «អនុម័ត Trial» នៅលើសំណើដែល HR បានបញ្ជាក់។'] : []),
       '/claim SD-0001 · ទទួលសំណើ',
       '/verify SD-0001 HR_TELEGRAM_ID LOCATIONS SHIFT · កត់ការផ្ទៀងផ្ទាត់',
       '/trial SD-0001 COMPANY_CODE · កត់ថា Owner បានបើក Trial ក្នុង StaffDay',
@@ -288,6 +314,10 @@ export function createBot(store, config, clock = Date.now) {
     }
     if (!['/claim', '/verify', '/trial', '/used', '/extend', '/pause', '/close', '/invoice', '/active'].includes(action)) return;
     if (!lead) return say('រកមិនឃើញលេខសំណើ StaffDay។');
+    if (preparingTrial(lead)) return say('សំណើនេះបានអនុម័តរួច ហើយកំពុងភ្ជាប់ទៅ StaffDay។ ប្រើ /failed ដើម្បីពិនិត្យកំហុស។');
+    if (lead.pendingTrialEnd && ['/extend', '/pause', '/active'].includes(action)) {
+      return say('ការពន្យារ Trial កំពុងដំណើរការ។ ប្រើ /failed ដើម្បីពិនិត្យកំហុស។');
+    }
     if (action === '/claim') {
       if (!['new', 'review'].includes(lead.stage) || (lead.assigned && lead.assigned !== user)) {
         return say('សំណើនេះមានអ្នកទទួល ឬបានឆ្លងដំណាក់កាលពិនិត្យ។');
@@ -296,6 +326,7 @@ export function createBot(store, config, clock = Date.now) {
       return say('បានទទួល ' + label(lead) + '\nបន្ទាប់: /verify ' + lead.id + ' HR_TELEGRAM_ID LOCATIONS SHIFT');
     }
     if (action === '/verify') {
+      if (lead.trialHrConfirmed && config.trialApi) return say('Bot បានបញ្ជាក់គណនី HR រួច។ សូមប្រើប៊ូតុងអនុម័ត Trial។');
       if (!['new', 'review', 'ready'].includes(lead.stage) || (!owner && lead.assigned && lead.assigned !== user)) {
         return say('សំណើនេះមិនស្ថិតក្នុងការពិនិត្យរបស់អ្នក។');
       }
@@ -309,11 +340,12 @@ export function createBot(store, config, clock = Date.now) {
       return say('បានកត់ការផ្ទៀងផ្ទាត់ HR សម្រាប់ ' + label(lead) + '\nOwner បង្កើតក្រុមហ៊ុនក្នុង StaffDay រួចប្រើ /trial ' + lead.id + ' COMPANY_CODE');
     }
     if (action === '/trial') {
+      if (lead.trialHrConfirmed && config.trialApi) return say('សូមប្រើប៊ូតុង «អនុម័ត Trial» ក្នុងក្រុមលក់។');
       const companyCode = args[0]?.toUpperCase();
       if (lead.stage === 'trial' && lead.companyCode === companyCode) return say('Trial កត់រួច · ' + label(lead));
       if (lead.stage !== 'ready' || !lead.hrId) return say('ផ្ទៀងផ្ទាត់ HR មុន ដោយប្រើ /verify។');
       if (!/^[A-Z0-9_-]{2,48}$/.test(companyCode || '')) return say('ប្រើ /trial ' + lead.id + ' COMPANY_CODE');
-      const sameCompany = store.all('leads').find(item => item.companyCode === companyCode);
+      const sameCompany = store.all('leads').find(item => item.companyCode?.toUpperCase() === companyCode);
       if (sameCompany) return say('Company Code នេះស្ថិតលើ ' + sameCompany.id + ' រួចហើយ។');
       const updated = saveLead(lead, { stage: 'trial', companyCode, trialStart: now,
         trialEnd: now + config.trialDays * DAY }, user, now);
@@ -332,6 +364,13 @@ export function createBot(store, config, clock = Date.now) {
       const days = positiveInteger(args[0], 1, 90);
       if (lead.stage !== 'trial' || !days) return say('ប្រើ /extend ' + lead.id + ' DAYS លើ Trial។');
       const trialEnd = Math.max(now, lead.trialEnd) + days * DAY;
+      if (lead.staffdayRequestId) {
+        if (!config.trialApi) return say('សូមភ្ជាប់ប្រព័ន្ធ StaffDay មុនពន្យារ Trial។');
+        saveLead(lead, {pendingTrialEnd:trialEnd, extensionBy:user}, user, now);
+        store.queue('staffday', 'staffday:extend:' + lead.id + ':' + trialEnd,
+          {leadId:lead.id, staffdayRequestId:lead.staffdayRequestId, trialEnd}, now);
+        return say('បានដាក់សំណើពន្យារ Trial ក្នុងជួរ · ' + lead.id);
+      }
       const updated = saveLead(lead, { trialEnd }, user, now);
       scheduleTrial(updated);
       replyToBuyer('extended:' + lead.id + ':' + trialEnd,
@@ -468,7 +507,32 @@ export function createBot(store, config, clock = Date.now) {
         return;
       }
       if (chatId === config.salesChat && !privateChat(chat)) return processSales({ user, input, data, say, now });
-      if (privateChat(chat)) return processCustomer({ user, input, data, say, now });
+      if (privateChat(chat)) return processCustomer({ user, profile:event.from, input, data, say, now });
+    },
+    recordStaffDayTrial(lead, result) {
+      const now = clock();
+      const updated = saveLead(lead, {
+        stage: 'trial', companyCode: result.companyCode, trialStart: result.trialStart, trialEnd: result.trialEnd,
+      }, lead.approvedBy, now);
+      scheduleTrial(updated);
+      const text = 'StaffDay រួចរាល់ · ' + label(updated) + '\nផុតកំណត់: ' + formattedDate(updated.trialEnd);
+      const reply_markup = {inline_keyboard: [[link('បើក StaffDay', config.staffdayUrl)]]};
+      queueTelegram('trial-open:' + lead.id, 'sendMessage', {chat_id:lead.buyer, text, reply_markup}, now);
+      if (lead.buyer !== lead.hrId) {
+        queueTelegram('trial-hr-open:' + lead.id, 'sendMessage', {chat_id:lead.hrId, text, reply_markup}, now);
+      }
+      dueMessage('trial-ready:' + lead.id, config.salesChat,
+        'បានបើក Trial និងផ្តល់សិទ្ធិ HR · ' + label(updated) + '\nផុតកំណត់: ' + formattedDate(updated.trialEnd), now);
+    },
+    recordStaffDayExtension(lead, result) {
+      const now = clock();
+      const updated = saveLead(lead, {trialEnd:result.trialEnd, pendingTrialEnd:undefined, extensionBy:undefined},
+        lead.extensionBy, now);
+      scheduleTrial(updated);
+      const text = 'Trial StaffDay របស់ ' + lead.company + ' ត្រូវបានពន្យារដល់ ' + formattedDate(updated.trialEnd);
+      dueMessage('extended:' + lead.id + ':' + updated.trialEnd, lead.buyer, text, now);
+      if (lead.buyer !== lead.hrId) dueMessage('extended-hr:' + lead.id + ':' + updated.trialEnd, lead.hrId, text, now);
+      dueMessage('extended-sales:' + lead.id + ':' + updated.trialEnd, config.salesChat, text, now);
     },
     recordRefund(order) {
       if (order.status === 'refunded') return;

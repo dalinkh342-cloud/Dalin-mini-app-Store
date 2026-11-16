@@ -68,7 +68,12 @@ function conditionMatches(store, condition, now) {
   return Boolean(record && (!condition.beforeTrialEnd || record.trialEnd > now) && expiryKeys.every(key => condition[key] === undefined || condition[key] === record[key]));
 }
 
-export async function runJob({ store, bot, telegram, notion, config, now = Date.now, logger = console }, type) {
+function matchesTrialJob(lead, payload) {
+  return lead && lead.staffdayRequestId === payload.staffdayRequestId &&
+    (payload.trialEnd ? lead.stage === 'trial' && lead.pendingTrialEnd === payload.trialEnd : lead.stage === 'ready');
+}
+
+export async function runJob({ store, bot, telegram, notion, staffdayTrial, config, now = Date.now, logger = console }, type) {
   const job = store.due(type, now());
   if (!job) return false;
   const payload = job.payload;
@@ -78,6 +83,25 @@ export async function runJob({ store, bot, telegram, notion, config, now = Date.
       await telegram(payload.method, payload.body, { timeout: 8000 });
     }
     if (type === 'notion') await syncNotion(notion, store, config.sources, payload);
+    if (type === 'staffday') {
+      const lead = store.get('leads', payload.leadId);
+      if (matchesTrialJob(lead, payload)) {
+        const requestId = payload.staffdayRequestId;
+        const result = payload.trialEnd
+          ? await staffdayTrial('PATCH', {requestId, trialEnd:payload.trialEnd})
+          : await staffdayTrial('POST', {requestId, company:lead.company, hrId:lead.hrId,
+            hrName:lead.hrName, trialDays:payload.trialDays});
+        store.transaction(() => {
+          const current = store.get('leads', payload.leadId);
+          if (matchesTrialJob(current, payload)) {
+            if (payload.trialEnd) bot.recordStaffDayExtension(current, result);
+            else bot.recordStaffDayTrial(current, result);
+          }
+          store.finish(job, 'done', now());
+        });
+        return true;
+      }
+    }
     if (type === 'refund') {
       const order = store.get('orders', payload.id);
       if (order?.status === 'refund_pending') {
@@ -91,7 +115,8 @@ export async function runJob({ store, bot, telegram, notion, config, now = Date.
     }
     store.finish(job, 'done', now());
   } catch (error) {
-    const retryable = !error.status || error.status === 429 || error.status >= 500;
+    const retryable = !error.status || error.status === 429 || error.status >= 500 ||
+      (type === 'staffday' && error.status === 408);
     const failed = !retryable || job.attempts >= 7;
     const delay = Math.max((error.retryAfter || 0) * 1000, Math.min(30 * 60_000, 3000 * 2 ** job.attempts));
     const message = error.message.slice(0, 230);

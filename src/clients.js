@@ -44,3 +44,23 @@ export function notionClient(token, fetchImpl = fetch) {
     body: body === undefined ? undefined : JSON.stringify(body),
   }, { service: 'Notion', method, fetchImpl });
 }
+
+export function staffdayTrialClient({ origin, secret }, fetchImpl = fetch) {
+  return async (method, payload) => {
+    const result = await request(new URL('/internal/sales/trials', origin), {
+      method, redirect: 'error', headers: {
+        Authorization: 'Bearer ' + secret,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    }, { service: 'StaffDay', method, fetchImpl, timeout: 25_000 });
+    if (result?.requestId !== payload.requestId || result?.companyCode !== 'sale-' + payload.requestId ||
+        !Number.isSafeInteger(result.trialStart) || !Number.isSafeInteger(result.trialEnd) ||
+        result.trialStart <= 0 || result.trialEnd <= result.trialStart ||
+        !Number.isFinite(+new Date(result.trialEnd)) ||
+        (method === 'PATCH' && result.trialEnd < payload.trialEnd)) {
+      throw new ApiError('StaffDay', method, 502, 'invalid_response');
+    }
+    return result;
+  };
+}

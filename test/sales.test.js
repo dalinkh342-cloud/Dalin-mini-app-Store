@@ -298,3 +298,111 @@ test('config requires a Railway volume and validates UTC+7 paid-through date', (
   assert.throws(() => loadConfig({ ...env, RAILWAY_ENVIRONMENT_ID:'production' }), /volume/);
   assert.equal(loadConfig({ ...env, RAILWAY_ENVIRONMENT_ID:'production', RAILWAY_VOLUME_MOUNT_PATH:'/data' }).dataDir, '/data');
 });
+
+const integrated = { trialApi: { origin:'https://staffday.test', secret:'a'.repeat(64) }, botUsername:'DalinTestBot' };
+
+function fakeStaffDay(e) {
+  const receipts = new Map();
+  const calls = [];
+  const api = async (method, body) => {
+    calls.push({method,...body});
+    let result = receipts.get(body.requestId);
+    if (method === 'POST' && !result) {
+      const trialStart = e.now();
+      result = {requestId:body.requestId,companyCode:'sale-' + body.requestId,trialStart,
+        trialEnd:trialStart + body.trialDays * DAY};
+    }
+    if (method === 'PATCH') result = {...result,trialEnd:body.trialEnd};
+    receipts.set(body.requestId,result);
+    return result;
+  };
+  return { api, calls, receipts };
+}
+
+test('requester-as-HR uses their Telegram ID and only one owner approval creates and sends the trial', async t => {
+  const e = setup(t,integrated);
+  const { lead } = request(e);
+  e.click(owner,'approve-trial:' + lead,group);
+  assert.equal(e.store.due('staffday',e.now()),undefined);
+  e.click(guest,'hr-self:' + lead);
+  assert.equal(e.store.get('leads',lead).hrId,String(guest));
+  e.click(seller,'approve-trial:' + lead,group);
+  assert.equal(e.store.due('staffday',e.now()),undefined);
+  e.click(owner,'approve-trial:' + lead,{...group,id:-10099});
+  assert.equal(e.store.due('staffday',e.now()),undefined);
+  e.click(owner,'approve-trial:' + lead,group);
+  const job = e.store.due('staffday',e.now());
+  assert.equal(e.store.get('leads',lead).stage,'ready');
+  e.click(owner,'approve-trial:' + lead,group);
+  const staffday = fakeStaffDay(e);
+  await e.drain('staffday',{staffdayTrial:staffday.api});
+  await e.drain();
+  const saved = e.store.get('leads',lead);
+  assert.equal(saved.stage,'trial');
+  assert.equal(saved.companyCode,'sale-' + job.payload.staffdayRequestId);
+  assert.equal(saved.trialEnd - saved.trialStart,14 * DAY);
+  assert.equal(staffday.calls.length,1);
+  assert.equal(staffday.calls[0].hrId,String(guest));
+  assert.equal(e.sent.filter(message => message.chat_id === String(guest) && message.text.startsWith('StaffDay រួចរាល់')).length,1);
+  e.group(owner,'/extend ' + lead + ' 7');
+  assert.equal(e.store.get('leads',lead).trialEnd,saved.trialEnd);
+  await e.drain('staffday',{staffdayTrial:staffday.api});
+  assert.equal(e.store.get('leads',lead).trialEnd,saved.trialEnd + 7 * DAY);
+});
+
+test('an existing request can invite another HR and binds exactly the first valid Telegram identity', async t => {
+  const e = setup(t,integrated);
+  const old = request(e);
+  e.store.transaction(() => {
+    const record = e.store.get('leads',old.lead);
+    e.store.save('leads',{...record,stage:'review',assigned:String(seller)},e.now());
+  });
+  e.message(guest,'/my');
+  e.click(guest,'lead:' + old.lead);
+  e.click(guest,'hr-other:' + old.lead);
+  const expired = e.store.get('leads',old.lead).hrInvite;
+  e.message(guest,'/start hr_' + expired);
+  assert.equal(e.store.get('leads',old.lead).hrId,undefined);
+  e.tick(1);
+  e.message(555,'/start hr_' + expired);
+  assert.equal(e.store.get('leads',old.lead).hrId,undefined);
+  e.click(guest,'hr-other:' + old.lead);
+  const invite = e.store.get('leads',old.lead).hrInvite;
+  assert.notEqual(invite,expired);
+  e.message(555,'/start hr_' + invite);
+  e.message(556,'/start hr_' + invite);
+  assert.equal(e.store.get('leads',old.lead).hrId,'555');
+  assert.equal(e.store.get('trial_invites',invite),null);
+  await e.drain();
+  assert.ok(e.sent.some(row => row.chat_id === String(guest) && row.text.includes('https://t.me/DalinTestBot?start=hr_' + invite)));
+  assert.equal(e.sent.filter(row => row.chat_id === String(group.id) &&
+    row.reply_markup?.inline_keyboard[0][0].callback_data === 'approve-trial:' + old.lead).length,1);
+  e.click(owner,'approve-trial:' + old.lead,group);
+  await e.drain('staffday',{staffdayTrial:fakeStaffDay(e).api});
+  await e.drain();
+  assert.equal(e.store.get('leads',old.lead).stage,'trial');
+  for (const chat of [String(guest),'555']) {
+    assert.ok(e.sent.find(row => row.chat_id === chat &&
+      row.reply_markup?.inline_keyboard[0][0].url === e.config.staffdayUrl));
+  }
+});
+
+test('an uncertain StaffDay response is retried with the same approval ID', async t => {
+  const e = setup(t,integrated);
+  const {lead} = request(e);
+  e.click(guest,'hr-self:' + lead);
+  e.click(owner,'approve-trial:' + lead,group);
+  const staffday = fakeStaffDay(e);
+  await e.drain('staffday',{staffdayTrial:async (method,payload) => {
+    await staffday.api(method,payload);
+    throw new ApiError('StaffDay',method,0,'network');
+  }});
+  assert.equal(e.store.get('leads',lead).stage,'ready');
+  const requestId = e.store.get('leads',lead).staffdayRequestId;
+  e.click(owner,'approve-trial:' + lead,group);
+  e.tick(.001);
+  await e.drain('staffday',{staffdayTrial:staffday.api});
+  assert.equal(e.store.get('leads',lead).stage,'trial');
+  assert.deepEqual(staffday.calls.map(call => call.requestId),[requestId,requestId]);
+  assert.equal(staffday.receipts.size,1);
+});
