@@ -3,9 +3,9 @@ import { DAY, formattedDate, localDateEnd, positiveInteger } from './config.js';
 import { canChooseTrialHr, handleTrialHr, hrChoiceButtons, preparingTrial } from './trial-approval.js';
 
 const PRODUCTS = {
-  staffday: { name: 'StaffDay', prefix: 'SD', details: 'កត់វត្តមានតាមទីតាំង ស្នើសុំឈប់សម្រាក និងទាញរបាយការណ៍ HR។' },
-  inventra: { name: 'Inventra', prefix: 'IN', details: 'គ្រប់គ្រងទំនិញចូលចេញ ស្តុក ទ្រព្យសម្បត្តិ និង QR។' },
-  luyvio: { name: 'Luyvio', prefix: 'LU', details: 'បង្កើតវិក្កយបត្រ សម្រង់តម្លៃ និងឯកសារ PDF។' },
+  staffday: { name: 'StaffDay', prefix: 'SD', details: 'កត់វត្តមានតាមទីតាំង ស្នើសុំឈប់សម្រាក និងទាញរបាយការណ៍ HR។', en: 'Record attendance by location, request leave and download HR reports.' },
+  inventra: { name: 'Inventra', prefix: 'IN', details: 'គ្រប់គ្រងទំនិញចូលចេញ ស្តុក ទ្រព្យសម្បត្តិ និង QR។', en: 'Manage stock movements, inventory and assets with QR codes.' },
+  luyvio: { name: 'Luyvio', prefix: 'LU', details: 'បង្កើតវិក្កយបត្រ សម្រង់តម្លៃ និងឯកសារ PDF។', en: 'Create invoices and quotes and export them as PDFs.' },
 };
 
 const STAGES = {
@@ -28,6 +28,25 @@ export function createBot(store, config, clock = Date.now) {
 
   function dueMessage(id, chat, text, due, condition) {
     queueTelegram(id, 'sendMessage', { chat_id: chat, text }, due, condition);
+  }
+
+  const catalogUrl = config.catalogOrigin && config.catalogOrigin + '/catalog/';
+  const languageFor = user => store.get('preferences', user)?.language || 'km';
+
+  function makeSay(chatId, jobPrefix, now) {
+    let messages = 0;
+    return (text, keyboard = [], photo) => {
+      const jobId = jobPrefix + ':' + messages++;
+      const reply_markup = keyboard.length ? { inline_keyboard: keyboard } : undefined;
+      const body = { chat_id: chatId, text, reply_markup, link_preview_options: { is_disabled: true } };
+      if (photo) {
+        store.queue('telegram', jobId, {
+          method: 'sendPhoto', body: { chat_id: chatId, photo, caption: text, reply_markup }, fallback: body,
+        }, now);
+      } else {
+        queueTelegram(jobId, 'sendMessage', body, now);
+      }
+    };
   }
 
   function saveLead(lead, fields, by, now) {
@@ -72,23 +91,40 @@ export function createBot(store, config, clock = Date.now) {
   function processCustomer({ user, profile, input, data, say, now }) {
     const draft = store.get('drafts', user);
     const setDraft = fields => store.save('drafts', { id: user, ...fields }, now);
-    const menu = () => say('សួស្តី! សូមជ្រើសកម្មវិធីសម្រាប់ការងារប្រចាំថ្ងៃរបស់អ្នក។', [
-      [callback('StaffDay', 'product:staffday'), callback('Inventra', 'product:inventra'), callback('Luyvio', 'product:luyvio')],
-      [callback('សំណើរបស់ខ្ញុំ', 'mine'), callback('ជជែកជាមួយអ្នកលក់', 'ask:general')],
-    ]);
+    const selectedLanguage = catalogUrl && /^language:(km|en)$/.exec(data || '')?.[1];
+    if (selectedLanguage) store.setLanguage(user, selectedLanguage);
+    const english = languageFor(user) === 'en';
+    const tr = (km, en) => english ? en : km;
+    const contact = tr('ទាក់ទងក្រុមលក់', 'Contact sales');
+    const myRequests = tr('សំណើរបស់ខ្ញុំ', 'My requests');
+    const requestTrial = tr('ស្នើសាកល្បង', 'Request a trial');
+    const cancel = [callback(tr('បោះបង់', 'Cancel'), 'menu')];
+    const menu = () => {
+      const text = tr('សូមជ្រើសកម្មវិធីសម្រាប់អាជីវកម្មរបស់អ្នក។', 'Choose an app for your business.');
+      if (catalogUrl) {
+        return say(text, [
+          [{ text: tr('មើលផលិតផល', 'View products'), web_app: { url: catalogUrl } }],
+          [callback(tr('ប្ដូរភាសា', 'Language'), 'choose-language'), callback(contact, 'ask:general')],
+        ], catalogUrl + 'welcome.jpg');
+      }
+      return say(tr('សួស្តី! សូមជ្រើសកម្មវិធីសម្រាប់ការងារប្រចាំថ្ងៃរបស់អ្នក។', text), [
+        [callback('StaffDay', 'product:staffday'), callback('Inventra', 'product:inventra'), callback('Luyvio', 'product:luyvio')],
+        [callback(myRequests, 'mine'), callback(contact, 'ask:general')],
+      ]);
+    };
     const product = (key, source) => {
       if (!hasProduct(key)) return menu();
       const entry = PRODUCTS[key];
       setDraft({ product: key, source, step: 'browse' });
       const buttons = [];
       if (key === 'staffday') {
-        if (config.demoUrl || config.reportDemoUrl) buttons.push([callback('មើល Demo', 'demo')]);
-        buttons.push([callback('ស្នើសាកល្បង', 'starttrial')]);
+        if (config.demoUrl || config.reportDemoUrl) buttons.push([callback(tr('មើល Demo', 'View demo'), 'demo')]);
+        buttons.push([callback(requestTrial, 'starttrial')]);
       }
-      buttons.push([callback('ជជែកជាមួយអ្នកលក់', 'ask:' + key), callback('ត្រឡប់', 'menu')]);
-      const trial = key === 'staffday' ? '\nសាកល្បង ' + config.trialDays + ' ថ្ងៃ។' +
+      buttons.push([callback(contact, 'ask:' + key), callback(tr('ត្រឡប់', 'Back'), 'menu')]);
+      const trial = key === 'staffday' ? '\n' + tr('សាកល្បង ' + config.trialDays + ' ថ្ងៃ។', config.trialDays + '-day trial.') +
         (config.priceLabel ? '\n' + config.priceLabel : '') : '';
-      return say(entry.name + '\n' + entry.details + trial, buttons);
+      return say(entry.name + '\n' + tr(entry.details, entry.en) + trial, buttons);
     };
     const showLead = lead => {
       const end = lead.stage === 'trial' && lead.trialEnd < now ? ' · ដល់ថ្ងៃផុតកំណត់' : '';
@@ -117,6 +153,11 @@ export function createBot(store, config, clock = Date.now) {
       store.forget('drafts', user);
       return menu();
     }
+    if (catalogUrl && (data === 'choose-language' || input === '/language')) {
+      return say(tr('ជ្រើសភាសា', 'Choose a language'),
+        [[callback('ខ្មែរ', 'language:km'), callback('English', 'language:en')]]);
+    }
+    if (selectedLanguage) return menu();
     if (data?.startsWith('product:')) return product(data.split(':')[1], 'catalog');
     if (data === 'demo') {
       const rows = [];
@@ -127,7 +168,7 @@ export function createBot(store, config, clock = Date.now) {
     }
     if (data === 'starttrial') {
       setDraft({ step: 'company', product: 'staffday', source: (draft?.product === 'staffday' && draft.source) || 'direct', nonce: randomUUID().slice(0, 12) });
-      return say('សូមវាយឈ្មោះក្រុមហ៊ុនរបស់អ្នក។', [[callback('បោះបង់', 'menu')]]);
+      return say(tr('សូមវាយឈ្មោះក្រុមហ៊ុនរបស់អ្នក។', 'Enter your company name.'), [cancel]);
     }
     if (data?.startsWith('confirm:')) {
       if (!draft || draft.nonce !== data.split(':')[1]) return say('សំណើនេះបានផ្លាស់ប្ដូរ។ សូមចុច /start។');
@@ -157,7 +198,7 @@ export function createBot(store, config, clock = Date.now) {
     if (data === 'mine' || input === '/my') {
       const rows = store.all('leads').filter(lead => lead.buyer === user).slice(-20).reverse()
         .map(lead => [callback(label(lead).slice(0, 60), 'lead:' + lead.id)]);
-      return say(rows.length ? 'សំណើរបស់ខ្ញុំ' : 'អ្នកមិនទាន់មានសំណើ StaffDay។', rows);
+      return say(rows.length ? myRequests : tr('អ្នកមិនទាន់មានសំណើ StaffDay។', 'You have no StaffDay requests yet.'), rows);
     }
     if (/^(lead|renew|help):/.test(data || '')) {
       const [action, id] = data.split(':');
@@ -178,27 +219,31 @@ export function createBot(store, config, clock = Date.now) {
       const selected = data?.split(':')[1];
       setDraft({ step: 'question', kind: input === '/paysupport' ? 'payment_support' : 'question',
         product: hasProduct(selected) ? selected : undefined });
-      return say(input === '/paysupport' ? 'សូមវាយលេខ Order និងពិពណ៌នាបញ្ហាទូទាត់ ឬសំណើសងប្រាក់។' :
-        'សូមវាយសំណួរដែលអ្នកចង់សួរក្រុមលក់។', [[callback('បោះបង់', 'menu')]]);
+      return say(input === '/paysupport' ?
+        tr('សូមវាយលេខ Order និងពិពណ៌នាបញ្ហាទូទាត់ ឬសំណើសងប្រាក់។', 'Enter the order number and describe your payment issue or refund request.') :
+        tr('សូមវាយសំណួរដែលអ្នកចង់សួរក្រុមលក់។', 'Type your question for the sales team.'), [cancel]);
     }
     if (!input || input.startsWith('/')) return menu();
     if (draft?.step === 'company') {
       if (input.length < 2 || input.length > 90 || /[\u0000-\u001f\u007f]/u.test(input)) {
-        return say('សូមបញ្ចូលឈ្មោះក្រុមហ៊ុនមួយបន្ទាត់ ពី ២ ដល់ ៩០ តួអក្សរ។');
+        return say(tr('សូមបញ្ចូលឈ្មោះក្រុមហ៊ុនមួយបន្ទាត់ ពី ២ ដល់ ៩០ តួអក្សរ។', 'Enter a company name of 2 to 90 characters on one line.'));
       }
       setDraft({ ...draft, company: input, step: 'count' });
-      return say('តើមានបុគ្គលិកប៉ុន្មាននាក់ដែលនឹងប្រើ StaffDay?');
+      return say(tr('តើមានបុគ្គលិកប៉ុន្មាននាក់ដែលនឹងប្រើ StaffDay?', 'How many employees will use StaffDay?'));
     }
     if (draft?.step === 'count') {
       const digits = input.replace(/[០-៩]/g, ch => String(ch.charCodeAt(0) - 0x17e0));
       const count = positiveInteger(digits, 1, 10000);
-      if (!count) return say('សូមវាយចំនួនបុគ្គលិកពី 1 ដល់ 10,000។');
+      if (!count) return say(tr('សូមវាយចំនួនបុគ្គលិកពី 1 ដល់ 10,000។', 'Enter a number from 1 to 10,000.'));
       setDraft({ ...draft, count, step: 'confirm' });
-      return say('ពិនិត្យសំណើ StaffDay\nក្រុមហ៊ុន: ' + draft.company + '\nបុគ្គលិក: ' + count,
-        [[callback('បញ្ជាក់សំណើ', 'confirm:' + draft.nonce), callback('កែព័ត៌មាន', 'starttrial')], [callback('បោះបង់', 'menu')]]);
+      return say(tr('ពិនិត្យសំណើ StaffDay\nក្រុមហ៊ុន: ', 'Review your StaffDay request\nCompany: ') + draft.company +
+        tr('\nបុគ្គលិក: ', '\nEmployees: ') + count, [
+        [callback(tr('បញ្ជាក់សំណើ', 'Confirm request'), 'confirm:' + draft.nonce), callback(tr('កែព័ត៌មាន', 'Edit details'), 'starttrial')],
+        cancel,
+      ]);
     }
     if (draft?.step === 'question') {
-      if (input.length > 1600) return say('សូមរក្សាសារឱ្យខ្លីជាង 1,600 តួអក្សរ។');
+      if (input.length > 1600) return say(tr('សូមរក្សាសារឱ្យខ្លីជាង 1,600 តួអក្សរ។', 'Use 1,600 characters or fewer.'));
       const lead = draft.leadId ? store.get('leads', draft.leadId) : undefined;
       const ticket = saveTask({
         id: store.serial('tasks', 'TK'), kind: draft.kind, leadId: lead?.id,
@@ -208,7 +253,7 @@ export function createBot(store, config, clock = Date.now) {
       dueMessage('task:' + ticket.id, config.salesChat, ticket.id + ' · ' + ticket.kind +
         (ticket.product ? ' · ' + PRODUCTS[ticket.product].name : '') + '\n' + input +
         '\nឆ្លើយតប: /reply ' + ticket.id + ' សាររបស់អ្នក', now);
-      return say('បានទទួលសាររបស់អ្នក។ លេខតាមដាន ' + ticket.id + '។');
+      return say(tr('បានទទួលសាររបស់អ្នក។ លេខតាមដាន ' + ticket.id + '។', 'Message received. Reference: ' + ticket.id));
     }
     return menu();
   }
@@ -465,6 +510,22 @@ export function createBot(store, config, clock = Date.now) {
   }
 
   return {
+    catalogAction({ profile, action, language, requestId }) {
+      const user = String(profile.id);
+      if (action === 'session') return { language: languageFor(user) };
+      if (action === 'language') {
+        store.setLanguage(user, language);
+        return { language };
+      }
+      const jobPrefix = 'catalog:' + user + ':' + action + ':' + requestId;
+      const data = action === 'contact' ? 'ask:general' : action === 'mine' ? 'mine' : 'product:' + action;
+      store.transaction(() => {
+        if (store.hasJob(jobPrefix + ':0')) return;
+        const now = clock();
+        processCustomer({ user, profile, input: '', data, say: makeSay(user, jobPrefix, now), now });
+      });
+      return { ok: true };
+    },
     precheckout(query) {
       const now = clock();
       const user = String(query.from.id);
@@ -491,12 +552,7 @@ export function createBot(store, config, clock = Date.now) {
       const data = update.callback_query?.data;
       const input = (event.text || '').trim();
       const now = clock();
-      let messages = 0;
-      const say = (text, keyboard = []) => {
-        const body = { chat_id: chatId, text, link_preview_options: { is_disabled: true } };
-        if (keyboard.length) body.reply_markup = { inline_keyboard: keyboard };
-        queueTelegram('update:' + update.update_id + ':' + messages++, 'sendMessage', body, now);
-      };
+      const say = makeSay(chatId, 'update:' + update.update_id, now);
       if (input === '/whoami' && privateChat(chat)) return say('Telegram User ID: ' + user);
       if (/^\/chatid(?:@\w+)?$/.test(input) && !privateChat(chat) &&
           (config.owners.has(user) || config.sellers.has(user))) return say('Telegram Chat ID: ' + chatId);

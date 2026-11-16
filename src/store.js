@@ -41,6 +41,7 @@ export function openStore(path) {
   const deleteExpiredInvites = db.prepare(`DELETE FROM records
     WHERE kind='trial_invites' AND json_extract(body, '$.expires')<=?`);
   const addJob = db.prepare('INSERT OR IGNORE INTO jobs(id,type,payload,due) VALUES (?,?,?,?)');
+  const findJob = db.prepare('SELECT 1 FROM jobs WHERE id = ?');
   const markDirty = db.prepare(`INSERT INTO jobs(id,type,payload,due) VALUES (?,'notion',?,?)
     ON CONFLICT(id) DO UPDATE SET due=excluded.due, state='pending', attempts=0,
     revision=jobs.revision+1, error=NULL`);
@@ -80,6 +81,9 @@ export function openStore(path) {
       return record;
     },
     forget(kind, id) { remove.run(kind, String(id)); },
+    setLanguage(user, language) {
+      set.run('preferences', String(user), JSON.stringify({ language }));
+    },
     setTrialInvite(token, invite, time) {
       deleteExpiredInvites.run(time);
       set.run('trial_invites', token, JSON.stringify(invite));
@@ -92,6 +96,7 @@ export function openStore(path) {
       return prefix + '-' + String(value).padStart(4, '0');
     },
     queue(type, id, payload, due) { addJob.run(id, type, JSON.stringify(payload), due); },
+    hasJob(id) { return Boolean(findJob.get(id)); },
     due(type, time) {
       const row = jobSelect.get(type, time);
       return row && { ...row, payload: JSON.parse(row.payload) };

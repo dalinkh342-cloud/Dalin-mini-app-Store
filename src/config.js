@@ -54,6 +54,16 @@ export function loadConfig(env = process.env) {
     }
     trialApi = {origin: origin.origin, secret: trialApiSecret};
   }
+  const catalogSetting = env.CATALOG_PUBLIC_URL?.trim();
+  let catalogOrigin;
+  if (catalogSetting) {
+    const url = URL.parse(catalogSetting);
+    if (!url || url.protocol !== 'https:' || url.username || url.password ||
+        url.pathname !== '/' || url.search || url.hash) {
+      throw new Error('CATALOG_PUBLIC_URL must be the HTTPS origin of the Sales Bot.');
+    }
+    catalogOrigin = url.origin;
+  }
   return {
     token: requireSetting(env, 'BOT_TOKEN', value => /^\d+:[\w-]+$/.test(value ?? '')),
     salesChat: requireSetting(env, 'SALES_CHAT_ID', value => /^-\d+$/.test(value ?? '')),
@@ -63,7 +73,7 @@ export function loadConfig(env = process.env) {
     demoUrl: env.STAFFDAY_DEMO_URL?.trim(),
     reportDemoUrl: env.HR_REPORT_DEMO_URL?.trim(),
     priceLabel: env.STAFFDAY_PRICE_LABEL?.trim(),
-    stars, starsAmount, trialDays, trialApi, port,
+    stars, starsAmount, trialDays, trialApi, catalogOrigin, port,
     dataDir: env.RAILWAY_VOLUME_MOUNT_PATH || env.DATA_DIR || './data',
     notionToken: requireSetting(env, 'NOTION_TOKEN'),
     sources: {
