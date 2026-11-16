@@ -42,6 +42,18 @@ export function loadConfig(env = process.env) {
   for (const key of ['STAFFDAY_DEMO_URL', 'HR_REPORT_DEMO_URL']) {
     if (env[key] && !httpsUrl(env[key])) throw new Error('Invalid HTTPS URL in ' + key);
   }
+  const trialApiUrl = env.STAFFDAY_TRIAL_API_URL?.trim();
+  const trialApiSecret = env.STAFFDAY_TRIAL_API_SECRET?.trim();
+  let trialApi;
+  if (trialApiUrl || trialApiSecret) {
+    const origin = URL.parse(trialApiUrl || '');
+    const privateHttp = origin?.protocol === 'http:' && origin.hostname.endsWith('.railway.internal');
+    if (!origin || (origin.protocol !== 'https:' && !privateHttp) || origin.username || origin.password ||
+        origin.pathname !== '/' || origin.search || origin.hash || !/^[a-f0-9]{64}$/.test(trialApiSecret || '')) {
+      throw new Error('StaffDay trial integration requires a valid origin and a 64-character lowercase hex secret.');
+    }
+    trialApi = {origin: origin.origin, secret: trialApiSecret};
+  }
   return {
     token: requireSetting(env, 'BOT_TOKEN', value => /^\d+:[\w-]+$/.test(value ?? '')),
     salesChat: requireSetting(env, 'SALES_CHAT_ID', value => /^-\d+$/.test(value ?? '')),
@@ -51,7 +63,7 @@ export function loadConfig(env = process.env) {
     demoUrl: env.STAFFDAY_DEMO_URL?.trim(),
     reportDemoUrl: env.HR_REPORT_DEMO_URL?.trim(),
     priceLabel: env.STAFFDAY_PRICE_LABEL?.trim(),
-    stars, starsAmount, trialDays, port,
+    stars, starsAmount, trialDays, trialApi, port,
     dataDir: env.RAILWAY_VOLUME_MOUNT_PATH || env.DATA_DIR || './data',
     notionToken: requireSetting(env, 'NOTION_TOKEN'),
     sources: {

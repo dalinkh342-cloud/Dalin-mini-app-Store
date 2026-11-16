@@ -38,6 +38,8 @@ export function openStore(path) {
     ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body`);
   const list = db.prepare('SELECT body FROM records WHERE kind = ?');
   const remove = db.prepare('DELETE FROM records WHERE kind = ? AND id = ?');
+  const deleteExpiredInvites = db.prepare(`DELETE FROM records
+    WHERE kind='trial_invites' AND json_extract(body, '$.expires')<=?`);
   const addJob = db.prepare('INSERT OR IGNORE INTO jobs(id,type,payload,due) VALUES (?,?,?,?)');
   const markDirty = db.prepare(`INSERT INTO jobs(id,type,payload,due) VALUES (?,'notion',?,?)
     ON CONFLICT(id) DO UPDATE SET due=excluded.due, state='pending', attempts=0,
@@ -78,6 +80,10 @@ export function openStore(path) {
       return record;
     },
     forget(kind, id) { remove.run(kind, String(id)); },
+    setTrialInvite(token, invite, time) {
+      deleteExpiredInvites.run(time);
+      set.run('trial_invites', token, JSON.stringify(invite));
+    },
     readCounter(key) { return counterRead.get(key)?.value || 0; },
     setCounter(key, value) { counterWrite.run(key, value); },
     serial(key, prefix) {

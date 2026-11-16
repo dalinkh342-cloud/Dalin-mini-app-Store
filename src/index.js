@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from './config.js';
 import { openStore } from './store.js';
-import { notionClient, telegramClient } from './clients.js';
+import { notionClient, staffdayTrialClient, telegramClient } from './clients.js';
 import { createBot } from './bot.js';
 import { poll, worker } from './runtime.js';
 
@@ -13,6 +13,8 @@ async function start() {
   const notion = notionClient(config.notionToken);
   const [identity, webhook] = await Promise.all([telegram('getMe'), telegram('getWebhookInfo')]);
   if (webhook.url) throw new Error('Use a dedicated Sales Bot with no webhook configured');
+  config.botUsername = identity.username;
+  const staffdayTrial = config.trialApi && staffdayTrialClient(config.trialApi);
   mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
   const store = openStore(join(config.dataDir, 'sales.sqlite'));
   const bot = createBot(store, config);
@@ -27,9 +29,10 @@ async function start() {
   process.once('SIGINT', () => abort.abort());
   server.listen(config.port, '0.0.0.0');
   console.log('Dalin sales bot is running as @' + identity.username);
-  const context = { store, bot, telegram, notion, config };
-  const jobs = [poll(store, bot, telegram, signal),
-    ...['telegram', 'notion', 'refund'].map(type => worker(context, type, signal))];
+  const context = { store, bot, telegram, notion, staffdayTrial, config };
+  const jobTypes = ['telegram', 'notion', 'refund'];
+  if (staffdayTrial) jobTypes.push('staffday');
+  const jobs = [poll(store, bot, telegram, signal), ...jobTypes.map(type => worker(context, type, signal))];
   try {
     await Promise.race(jobs);
   } finally {
