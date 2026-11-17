@@ -59,7 +59,7 @@ test('catalog validates Telegram identity and routes all customer actions throug
   assert.equal(sent[0].reply_markup.inline_keyboard[0][0].callback_data, 'starttrial');
   assert.equal(sent[1].reply_markup.inline_keyboard[0][0].callback_data, 'ask:inventra');
   assert.equal(sent[2].reply_markup.inline_keyboard[0][0].callback_data, 'ask:luyvio');
-  assert.match(sent[3].text, /no StaffDay requests/);
+  assert.match(sent[3].text, /no requests/);
   assert.match(sent[4].text, /sales team/);
 });
 

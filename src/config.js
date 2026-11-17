@@ -55,6 +55,18 @@ export function loadConfig(env = process.env) {
     trialApi = {origin: origin.origin, secret: trialApiSecret};
   }
   const catalogSetting = env.CATALOG_PUBLIC_URL?.trim();
+  const luyvioOrigin = env.LUYVIO_TRIAL_API_URL?.trim();
+  const luyvioSecret = env.LUYVIO_TRIAL_API_SECRET?.trim();
+  const luyvioUrl = env.LUYVIO_URL?.trim();
+  let luyvioTrialApi;
+  if (luyvioOrigin || luyvioSecret) {
+    const url = URL.parse(luyvioOrigin || '');
+    const privateHttp = url?.protocol === 'http:' && url.hostname.endsWith('.railway.internal');
+    if (!url || (url.protocol !== 'https:' && !privateHttp) || url.username || url.password ||
+        url.pathname !== '/' || url.search || url.hash || !/^[a-f0-9]{64}$/.test(luyvioSecret || '') ||
+        !httpsUrl(luyvioUrl)) throw new Error('Luyvio trial integration requires an origin, a 64-character lowercase hex secret and LUYVIO_URL.');
+    luyvioTrialApi = { origin: url.origin, secret: luyvioSecret };
+  }
   let catalogOrigin;
   if (catalogSetting) {
     const url = URL.parse(catalogSetting);
@@ -73,7 +85,7 @@ export function loadConfig(env = process.env) {
     demoUrl: env.STAFFDAY_DEMO_URL?.trim(),
     reportDemoUrl: env.HR_REPORT_DEMO_URL?.trim(),
     priceLabel: env.STAFFDAY_PRICE_LABEL?.trim(),
-    stars, starsAmount, trialDays, trialApi, catalogOrigin, port,
+    stars, starsAmount, trialDays, trialApi, luyvioTrialApi, luyvioUrl, catalogOrigin, port,
     dataDir: env.RAILWAY_VOLUME_MOUNT_PATH || env.DATA_DIR || './data',
     notionToken: requireSetting(env, 'NOTION_TOKEN'),
     sources: {

@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { DAY, formattedDate, localDateEnd, positiveInteger } from './config.js';
 import { canChooseTrialHr, handleTrialHr, hrChoiceButtons, preparingTrial } from './trial-approval.js';
+import { approveLuyvio, handleLuyvioCustomer, showLuyvioLead } from './luyvio-trial.js';
 
 const PRODUCTS = {
   staffday: { name: 'StaffDay', prefix: 'SD', details: 'កត់វត្តមានតាមទីតាំង ស្នើសុំឈប់សម្រាក និងទាញរបាយការណ៍ HR។', en: 'Record attendance by location, request leave and download HR reports.' },
@@ -121,12 +122,14 @@ export function createBot(store, config, clock = Date.now) {
         if (config.demoUrl || config.reportDemoUrl) buttons.push([callback(tr('មើល Demo', 'View demo'), 'demo')]);
         buttons.push([callback(requestTrial, 'starttrial')]);
       }
+      if (key === 'luyvio' && config.luyvioTrialApi) buttons.push([callback(requestTrial, 'lu-start')]);
       buttons.push([callback(contact, 'ask:' + key), callback(tr('ត្រឡប់', 'Back'), 'menu')]);
       const trial = key === 'staffday' ? '\n' + tr('សាកល្បង ' + config.trialDays + ' ថ្ងៃ។', config.trialDays + '-day trial.') +
         (config.priceLabel ? '\n' + config.priceLabel : '') : '';
       return say(entry.name + '\n' + tr(entry.details, entry.en) + trial, buttons);
     };
     const showLead = lead => {
+      if (lead.product === 'luyvio') return showLuyvioLead(lead, { say, config, tr });
       const end = lead.stage === 'trial' && lead.trialEnd < now ? ' · ដល់ថ្ងៃផុតកំណត់' : '';
       const stage = preparingTrial(lead) ? 'កំពុងបើក Trial' :
         lead.trialHrConfirmed && lead.stage === 'ready' ? 'រង់ចាំអនុម័ត Trial' : STAGES[lead.stage];
@@ -143,6 +146,7 @@ export function createBot(store, config, clock = Date.now) {
     };
 
     if (handleTrialHr({store, config, saveLead, queueTelegram, user, profile, data, input, say, now})) return;
+    if (handleLuyvioCustomer({ store, config, saveLead, queueTelegram, user, profile, data, input, say, now, tr })) return;
     if (/^\/start(?:\s|$)/.test(input)) {
       store.forget('drafts', user);
       const payload = input.split(/\s+/, 2)[1] || '';
@@ -198,7 +202,7 @@ export function createBot(store, config, clock = Date.now) {
     if (data === 'mine' || input === '/my') {
       const rows = store.all('leads').filter(lead => lead.buyer === user).slice(-20).reverse()
         .map(lead => [callback(label(lead).slice(0, 60), 'lead:' + lead.id)]);
-      return say(rows.length ? myRequests : tr('អ្នកមិនទាន់មានសំណើ StaffDay។', 'You have no StaffDay requests yet.'), rows);
+      return say(rows.length ? myRequests : tr('អ្នកមិនទាន់មានសំណើ។', 'You have no requests yet.'), rows);
     }
     if (/^(lead|renew|help):/.test(data || '')) {
       const [action, id] = data.split(':');
@@ -268,10 +272,10 @@ export function createBot(store, config, clock = Date.now) {
     const expired = leads.filter(lead => inPeriod(lead.trialEnd));
     const converted = expired.filter(lead => lead.firstActive && lead.firstActive < until);
     return [
-      'លទ្ធផល StaffDay · ៧ ថ្ងៃពេញមុនថ្ងៃនេះ (ម៉ោងកម្ពុជា)',
+      'លទ្ធផល Dalin Mini Apps · ៧ ថ្ងៃពេញមុនថ្ងៃនេះ (ម៉ោងកម្ពុជា)',
       'សំណើថ្មី៖ ' + leads.filter(lead => inPeriod(lead.created)).length,
       'បើក Trial៖ ' + leads.filter(lead => inPeriod(lead.trialStart)).length,
-      'HR ចូលប្រើ៖ ' + leads.filter(lead => inPeriod(lead.hrFirstUse)).length,
+      'StaffDay HR ចូលប្រើ៖ ' + leads.filter(lead => inPeriod(lead.hrFirstUse)).length,
       'Trial ដល់ថ្ងៃផុត៖ ' + expired.length,
       'បានបន្តពី Trial ខាងលើ៖ ' + converted.length,
       'អត្រាបន្ត៖ ' + (expired.length ? Math.round(converted.length / expired.length * 100) + '%' : '—'),
@@ -282,6 +286,7 @@ export function createBot(store, config, clock = Date.now) {
     const owner = config.owners.has(user);
     const allowed = owner || config.sellers.has(user);
     if (!allowed) return;
+    if (approveLuyvio({ store, config, saveLead, user, data, say, now })) return;
     const approval = /^approve-trial:(SD-\d+)$/.exec(data || '');
     if (approval) {
       if (!owner) return say('សកម្មភាពនេះសម្រាប់ Owner។');
@@ -358,6 +363,9 @@ export function createBot(store, config, clock = Date.now) {
       return say('បានដាក់សំណើសងប្រាក់ ' + order.id);
     }
     if (!['/claim', '/verify', '/trial', '/used', '/extend', '/pause', '/close', '/invoice', '/active'].includes(action)) return;
+    if (lead?.product === 'luyvio') {
+      return say('Luyvio · ' + lead.id + '\nការបើក Trial ប្រើប៊ូតុងអនុម័ត។ ការបន្តប្រើ និងផ្អាកប្រើគ្រប់គ្រងនៅ Luyvio → Owner → Companies។');
+    }
     if (!lead) return say('រកមិនឃើញលេខសំណើ StaffDay។');
     if (preparingTrial(lead)) return say('សំណើនេះបានអនុម័តរួច ហើយកំពុងភ្ជាប់ទៅ StaffDay។ ប្រើ /failed ដើម្បីពិនិត្យកំហុស។');
     if (lead.pendingTrialEnd && ['/extend', '/pause', '/active'].includes(action)) {
@@ -510,6 +518,25 @@ export function createBot(store, config, clock = Date.now) {
   }
 
   return {
+    recordLuyvioTrial(lead, result) {
+      const now = clock();
+      const updated = saveLead(lead, {
+        stage: 'trial', companyCode: result.companyCode, workspaceId: result.workspaceId,
+        trialStart: result.trialStart, trialEnd: result.trialEnd,
+      }, lead.approvedBy, now);
+      for (const buyer of new Set([updated.buyer, updated.adminId])) {
+        const english = languageFor(buyer) === 'en';
+        queueTelegram('lu-open:' + lead.id + ':' + buyer, 'sendMessage', {
+          chat_id: buyer,
+          text: 'Luyvio · ' + lead.company + '\n' +
+            (english ? 'Trial expires ' : 'Trial ផុតកំណត់ ') + formattedDate(updated.trialEnd),
+          reply_markup: { inline_keyboard: [[link(english ? 'Open Luyvio' : 'បើក Luyvio', config.luyvioUrl)]] },
+        }, now);
+      }
+      dueMessage('lu-ready:' + lead.id, config.salesChat,
+        'Luyvio រួចរាល់ · ' + label(updated) + '\nAdmin ID: ' + lead.adminId +
+        '\nTrial ផុតកំណត់ ' + formattedDate(updated.trialEnd), now);
+    },
     catalogAction({ profile, action, language, requestId }) {
       const user = String(profile.id);
       if (action === 'session') return { language: languageFor(user) };
