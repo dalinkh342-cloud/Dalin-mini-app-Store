@@ -73,7 +73,7 @@ function matchesTrialJob(lead, payload) {
     (payload.trialEnd ? lead.stage === 'trial' && lead.pendingTrialEnd === payload.trialEnd : lead.stage === 'ready');
 }
 
-export async function runJob({ store, bot, telegram, notion, staffdayTrial, config, now = Date.now, logger = console }, type) {
+export async function runJob({ store, bot, telegram, notion, staffdayTrial, luyvioTrial, config, now = Date.now, logger = console }, type) {
   const job = store.due(type, now());
   if (!job) return false;
   const payload = job.payload;
@@ -88,6 +88,19 @@ export async function runJob({ store, bot, telegram, notion, staffdayTrial, conf
       }
     }
     if (type === 'notion') await syncNotion(notion, store, config.sources, payload);
+    if (type === 'luyvio') {
+      const lead = store.get('leads', payload.leadId);
+      if (lead?.product === 'luyvio' && lead.stage === 'ready' && lead.luyvioRequestId === payload.requestId) {
+        const result = await luyvioTrial({ requestId: payload.requestId, company: lead.company,
+          adminId: lead.adminId, adminName: lead.adminName, trialDays: payload.trialDays });
+        store.transaction(() => {
+          const current = store.get('leads', lead.id);
+          if (current?.stage === 'ready' && current.luyvioRequestId === payload.requestId) bot.recordLuyvioTrial(current, result);
+          store.finish(job, 'done', now());
+        });
+        return true;
+      }
+    }
     if (type === 'staffday') {
       const lead = store.get('leads', payload.leadId);
       if (matchesTrialJob(lead, payload)) {
@@ -121,7 +134,7 @@ export async function runJob({ store, bot, telegram, notion, staffdayTrial, conf
     store.finish(job, 'done', now());
   } catch (error) {
     const retryable = !error.status || error.status === 429 || error.status >= 500 ||
-      (type === 'staffday' && error.status === 408);
+      (['staffday', 'luyvio'].includes(type) && error.status === 408);
     const failed = !retryable || job.attempts >= 7;
     const delay = Math.max((error.retryAfter || 0) * 1000, Math.min(30 * 60_000, 3000 * 2 ** job.attempts));
     const message = error.message.slice(0, 230);

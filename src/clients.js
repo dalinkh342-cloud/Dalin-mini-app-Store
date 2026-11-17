@@ -64,3 +64,21 @@ export function staffdayTrialClient({ origin, secret }, fetchImpl = fetch) {
     return result;
   };
 }
+
+export function luyvioTrialClient({ origin, secret }, fetchImpl = fetch) {
+  return async payload => {
+    const result = await request(new URL('/internal/sales/trials', origin), {
+      method: 'POST', redirect: 'error',
+      headers: { Authorization: 'Bearer ' + secret, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }, { service: 'Luyvio', method: 'POST', fetchImpl, timeout: 25_000 });
+    if (result?.requestId !== payload.requestId || result?.companyCode !== 'sale-' + payload.requestId ||
+        !/^[a-f0-9-]{36}$/.test(result?.workspaceId || '') ||
+        !Number.isSafeInteger(result.trialStart) || !Number.isSafeInteger(result.trialEnd) ||
+        result.trialStart <= 0 || result.trialEnd <= result.trialStart ||
+        !Number.isFinite(+new Date(result.trialEnd))) {
+      throw new ApiError('Luyvio', 'POST', 502, 'invalid_response');
+    }
+    return result;
+  };
+}
