@@ -7,6 +7,7 @@ const PRODUCTS = {
   staffday: { name: 'StaffDay', prefix: 'SD', details: 'កត់វត្តមានតាមទីតាំង ស្នើសុំឈប់សម្រាក និងទាញរបាយការណ៍ HR។', en: 'Record attendance by location, request leave and download HR reports.' },
   inventra: { name: 'Inventra', prefix: 'IN', details: 'គ្រប់គ្រងទំនិញចូលចេញ ស្តុក ទ្រព្យសម្បត្តិ និង QR។', en: 'Manage stock movements, inventory and assets with QR codes.' },
   luyvio: { name: 'Luyvio', prefix: 'LU', details: 'បង្កើតវិក្កយបត្រ សម្រង់តម្លៃ និងឯកសារ PDF។', en: 'Create invoices and quotes and export them as PDFs.' },
+  fleetday: { name: 'FleetDay', prefix: 'FD', details: 'កក់ឡាន និងបន្ទប់ប្រជុំរបស់ក្រុមហ៊ុន ហើយអនុម័តភ្លាមៗក្នុងក្រុម Telegram។', en: 'Book company cars and meeting rooms, approved right in your Telegram group.' },
 };
 
 const STAGES = {
@@ -109,7 +110,8 @@ export function createBot(store, config, clock = Date.now) {
         ], catalogUrl + 'welcome.jpg');
       }
       return say(tr('សួស្តី! សូមជ្រើសកម្មវិធីសម្រាប់ការងារប្រចាំថ្ងៃរបស់អ្នក។', text), [
-        [callback('StaffDay', 'product:staffday'), callback('Inventra', 'product:inventra'), callback('Luyvio', 'product:luyvio')],
+        [callback('StaffDay', 'product:staffday'), callback('Inventra', 'product:inventra')],
+        [callback('Luyvio', 'product:luyvio'), callback('FleetDay', 'product:fleetday')],
         [callback(myRequests, 'mine'), callback(contact, 'ask:general')],
       ]);
     };
@@ -123,9 +125,14 @@ export function createBot(store, config, clock = Date.now) {
         buttons.push([callback(requestTrial, 'starttrial')]);
       }
       if (key === 'luyvio' && config.luyvioTrialApi) buttons.push([callback(requestTrial, 'lu-start')]);
+      if (key === 'fleetday' && config.fleetdayUrl) buttons.push([callback(tr('សាកល្បងឥតគិតថ្លៃ', 'Start free trial'), 'fd-trial')]);
       buttons.push([callback(contact, 'ask:' + key), callback(tr('ត្រឡប់', 'Back'), 'menu')]);
-      const trial = key === 'staffday' ? '\n' + tr('សាកល្បង ' + config.trialDays + ' ថ្ងៃ។', config.trialDays + '-day trial.') +
+      let trial = key === 'staffday' ? '\n' + tr('សាកល្បង ' + config.trialDays + ' ថ្ងៃ។', config.trialDays + '-day trial.') +
         (config.priceLabel ? '\n' + config.priceLabel : '') : '';
+      if (key === 'fleetday' && config.fleetdayUrl) {
+        const days = config.fleetdayTrialDays || 14;
+        trial = '\n' + tr('សាកល្បងឥតគិតថ្លៃ ' + days + ' ថ្ងៃ — បង្កើតក្រុមហ៊ុនដោយខ្លួនឯងក្នុង FleetDay។', days + '-day free trial — set up your company yourself in FleetDay.');
+      }
       return say(entry.name + '\n' + tr(entry.details, entry.en) + trial, buttons);
     };
     const showLead = lead => {
@@ -150,7 +157,7 @@ export function createBot(store, config, clock = Date.now) {
     if (/^\/start(?:\s|$)/.test(input)) {
       store.forget('drafts', user);
       const payload = input.split(/\s+/, 2)[1] || '';
-      const match = /^(staffday|inventra|luyvio)(?:_([a-z0-9_-]{1,45}))?$/.exec(payload);
+      const match = /^(staffday|inventra|luyvio|fleetday)(?:_([a-z0-9_-]{1,45}))?$/.exec(payload);
       return match ? product(match[1], match[2] || 'direct') : menu();
     }
     if (data === 'menu' || input === '/cancel') {
@@ -163,6 +170,19 @@ export function createBot(store, config, clock = Date.now) {
     }
     if (selectedLanguage) return menu();
     if (data?.startsWith('product:')) return product(data.split(':')[1], 'catalog');
+    if (data === 'fd-trial') {
+      if (!config.fleetdayUrl) return product('fleetday', 'direct');
+      const who = [profile?.first_name, profile?.last_name].filter(Boolean).join(' ') || 'User';
+      dueMessage('fd-trial:' + user, config.salesChat, 'FleetDay · មានអ្នកចាប់ផ្តើមសាកល្បង\n' + who +
+        (profile?.username ? ' (@' + profile.username + ')' : '') + ' · ID ' + user +
+        '\nប្រភព: ' + ((draft?.product === 'fleetday' && draft.source) || 'direct') +
+        '\nតាមដានក្នុង FleetDay → Owner', now);
+      return say(tr('ចុចប៊ូតុងខាងក្រោម ដើម្បីបើក FleetDay ហើយបង្កើតក្រុមហ៊ុនរបស់អ្នក។ ការសាកល្បងចាប់ផ្តើមភ្លាមៗ។',
+        'Tap the button below to open FleetDay and create your company. Your trial starts straight away.'), [
+        [link(tr('បើក FleetDay', 'Open FleetDay'), config.fleetdayUrl)],
+        [callback(contact, 'ask:fleetday'), callback(tr('ត្រឡប់', 'Back'), 'menu')],
+      ]);
+    }
     if (data === 'demo') {
       const rows = [];
       if (config.demoUrl) rows.push([link('វីដេអូ Check In / Check Out', config.demoUrl)]);

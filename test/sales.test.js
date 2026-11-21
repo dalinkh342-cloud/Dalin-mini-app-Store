@@ -406,3 +406,39 @@ test('an uncertain StaffDay response is retried with the same approval ID', asyn
   assert.deepEqual(staffday.calls.map(call => call.requestId),[requestId,requestId]);
   assert.equal(staffday.receipts.size,1);
 });
+
+test('FleetDay: deep link shows the product, free trial opens FleetDay and tells the sales group once', async t => {
+  const e = setup(t, { fleetdayUrl: 'https://t.me/FleetDayDalinBot', fleetdayTrialDays: 14 });
+  e.message(guest, '/start fleetday_fb');
+  e.click(guest, 'fd-trial');
+  e.click(guest, 'fd-trial');
+  await e.drain();
+  const card = e.sent.find(row => row.text?.startsWith('FleetDay'));
+  assert.match(card.text, /សាកល្បងឥតគិតថ្លៃ 14 ថ្ងៃ/);
+  assert.equal(card.reply_markup.inline_keyboard[0][0].callback_data, 'fd-trial');
+  const opens = e.sent.filter(row => row.chat_id === String(guest) && row.reply_markup?.inline_keyboard[0][0].url);
+  assert.equal(opens.length, 2);
+  assert.equal(opens[0].reply_markup.inline_keyboard[0][0].url, 'https://t.me/FleetDayDalinBot');
+  const salesNotes = e.sent.filter(row => row.chat_id === String(group.id) && /FleetDay/.test(row.text));
+  assert.equal(salesNotes.length, 1);
+  assert.match(salesNotes[0].text, /ប្រភព: fb/);
+});
+
+test('FleetDay: questions become sales tickets tagged with the product', async t => {
+  const e = setup(t);
+  e.message(guest, '/start fleetday');
+  e.click(guest, 'ask:fleetday');
+  e.message(guest, 'Can drivers log fuel?');
+  const [ticket] = e.store.all('tasks');
+  assert.equal(ticket.product, 'fleetday');
+  await e.drain();
+  assert.ok(e.sent.some(row => row.chat_id === String(group.id) && /FleetDay/.test(row.text)));
+});
+
+test('FleetDay: config defaults to the FleetDay bot and rejects a non-HTTPS link', () => {
+  const base = { BOT_TOKEN: '1:abc', SALES_CHAT_ID: '-100', OWNER_IDS: '1', STAFFDAY_URL: 'https://t.me/a',
+    NOTION_TOKEN: 'x', NOTION_LEADS_SOURCE_ID: 'l', NOTION_TASKS_SOURCE_ID: 't' };
+  assert.equal(loadConfig(base).fleetdayUrl, 'https://t.me/FleetDayDalinBot');
+  assert.equal(loadConfig(base).fleetdayTrialDays, 14);
+  assert.throws(() => loadConfig({ ...base, FLEETDAY_URL: 'http://t.me/x' }), /FLEETDAY_URL/);
+});

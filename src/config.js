@@ -54,6 +54,10 @@ export function loadConfig(env = process.env) {
     }
     trialApi = {origin: origin.origin, secret: trialApiSecret};
   }
+  const fleetdayUrl = env.FLEETDAY_URL?.trim() || 'https://t.me/FleetDayDalinBot';
+  if (!httpsUrl(fleetdayUrl)) throw new Error('Invalid HTTPS URL in FLEETDAY_URL');
+  const fleetdayTrialDays = positiveInteger(env.FLEETDAY_TRIAL_DAYS || '14', 1, 90);
+  if (!fleetdayTrialDays) throw new Error('Invalid FLEETDAY_TRIAL_DAYS');
   const catalogSetting = env.CATALOG_PUBLIC_URL?.trim();
   const luyvioOrigin = env.LUYVIO_TRIAL_API_URL?.trim();
   const luyvioSecret = env.LUYVIO_TRIAL_API_SECRET?.trim();
@@ -86,6 +90,7 @@ export function loadConfig(env = process.env) {
     reportDemoUrl: env.HR_REPORT_DEMO_URL?.trim(),
     priceLabel: env.STAFFDAY_PRICE_LABEL?.trim(),
     stars, starsAmount, trialDays, trialApi, luyvioTrialApi, luyvioUrl, catalogOrigin, port,
+    fleetdayUrl, fleetdayTrialDays,
     dataDir: env.RAILWAY_VOLUME_MOUNT_PATH || env.DATA_DIR || './data',
     notionToken: requireSetting(env, 'NOTION_TOKEN'),
     sources: {
