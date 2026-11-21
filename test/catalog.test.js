@@ -36,7 +36,8 @@ test('catalog validates Telegram identity and routes all customer actions throug
     body: JSON.stringify({ action, initData: signedData(), ...extra }),
   });
   const page = await fetch(url);
-  assert.match(await page.text(), /StaffDay[\s\S]*Inventra[\s\S]*Luyvio/);
+  assert.match(await page.text(), /StaffDay[\s\S]*Inventra[\s\S]*Luyvio[\s\S]*FleetDay/);
+  assert.equal((await fetch(url + 'fleetday.webp', { method: 'HEAD' })).headers.get('content-type'), 'image/webp');
   assert.equal((await fetch(url + 'khmer.ttf', { method: 'HEAD' })).headers.get('content-type'), 'font/ttf');
   assert.equal((await send('session', { initData: signedData().replace('600', '601') })).status, 401);
   assert.equal((await send('session', { initData: signedData(Date.now() - 3_700_000) })).status, 401);
@@ -46,7 +47,7 @@ test('catalog validates Telegram identity and routes all customer actions throug
   assert.deepEqual(await (await send('language', { language: 'en' })).json(), { language: 'en' });
 
   const requestId = randomUUID();
-  for (const action of ['staffday', 'inventra', 'luyvio', 'mine', 'contact']) {
+  for (const action of ['staffday', 'inventra', 'luyvio', 'fleetday', 'mine', 'contact']) {
     assert.equal((await send(action, { requestId, chat_id: 999 })).status, 200, action);
   }
   assert.equal((await send('staffday', { requestId })).status, 200);
@@ -54,13 +55,14 @@ test('catalog validates Telegram identity and routes all customer actions throug
   const sent = [];
   const telegram = async (_method, body) => sent.push(body);
   while (await runJob({ store, bot, config, telegram }, 'telegram')) {}
-  assert.equal(sent.length, 5);
+  assert.equal(sent.length, 6);
   assert.ok(sent.every(message => message.chat_id === String(userId)));
   assert.equal(sent[0].reply_markup.inline_keyboard[0][0].callback_data, 'starttrial');
   assert.equal(sent[1].reply_markup.inline_keyboard[0][0].callback_data, 'ask:inventra');
   assert.equal(sent[2].reply_markup.inline_keyboard[0][0].callback_data, 'ask:luyvio');
-  assert.match(sent[3].text, /no requests/);
-  assert.match(sent[4].text, /sales team/);
+  assert.equal(sent[3].reply_markup.inline_keyboard[0][0].callback_data, 'ask:fleetday');
+  assert.match(sent[4].text, /no requests/);
+  assert.match(sent[5].text, /sales team/);
 });
 
 test('private /start shows the Mini App button even when Telegram rejects the welcome photo', async t => {

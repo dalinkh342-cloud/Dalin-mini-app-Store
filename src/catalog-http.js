@@ -11,11 +11,12 @@ const files = {
   'staffday.webp': ['staffday.webp', 'image/webp'],
   'inventra.webp': ['inventra.webp', 'image/webp'],
   'luyvio.webp': ['luyvio.webp', 'image/webp'],
+  'fleetday.webp': ['fleetday.webp', 'image/webp'],
   'welcome.jpg': ['welcome.jpg', 'image/jpeg'],
   'khmer.ttf': ['khmer.ttf', 'font/ttf'],
   'khmer-bold.ttf': ['khmer-bold.ttf', 'font/ttf'],
 };
-const chatActions = new Set(['staffday', 'inventra', 'luyvio', 'mine', 'contact']);
+const chatActions = new Set(['staffday', 'inventra', 'luyvio', 'fleetday', 'mine', 'contact']);
 const languages = new Set(['km', 'en']);
 
 export function telegramProfile(initData, token, now = Date.now()) {

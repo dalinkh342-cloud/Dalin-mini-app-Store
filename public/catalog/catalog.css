@@ -51,6 +51,7 @@ h1 { font-size: clamp(1.55rem, 6vw, 2.15rem); line-height: 1.45; margin: 0; }
 .staffday { --border: #ded2f4; --fill: #eee9fb; --accent: #5230b0; }
 .inventra { --border: #efd8bd; --fill: #f9efe4; --accent: #8d490e; }
 .luyvio { --border: #cbe6d9; --fill: #e6f2eb; --accent: #13694d; }
+.fleetday { --border: #bfe3ee; --fill: #e3f4f9; --accent: #06506a; }
 .product img {
   display: block; width: clamp(4rem, 19vw, 6.5rem); height: auto;
   border: .24rem solid white; border-radius: 1rem; background: white;
