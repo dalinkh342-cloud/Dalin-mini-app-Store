@@ -107,7 +107,7 @@ export function createBot(store, config, clock = Date.now) {
         return say(text, [
           [{ text: tr('មើលផលិតផល', 'View products'), web_app: { url: catalogUrl } }],
           [callback(tr('ប្ដូរភាសា', 'Language'), 'choose-language'), callback(contact, 'ask:general')],
-        ], catalogUrl + 'welcome.jpg');
+        ], catalogUrl + 'welcome.jpg?v=4apps');
       }
       return say(tr('សួស្តី! សូមជ្រើសកម្មវិធីសម្រាប់ការងារប្រចាំថ្ងៃរបស់អ្នក។', text), [
         [callback('StaffDay', 'product:staffday'), callback('Inventra', 'product:inventra')],
