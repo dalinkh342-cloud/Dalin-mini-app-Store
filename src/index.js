@@ -7,6 +7,7 @@ import { notionClient, staffdayTrialClient, luyvioTrialClient, telegramClient } 
 import { createBot } from './bot.js';
 import { poll, worker } from './runtime.js';
 import { catalogHandler } from './catalog-http.js';
+import { khqrHandler } from './khqr.js';
 
 async function start() {
   const config = loadConfig();
@@ -15,6 +16,7 @@ async function start() {
   const [identity, webhook] = await Promise.all([telegram('getMe'), telegram('getWebhookInfo')]);
   if (webhook.url) throw new Error('Use a dedicated Sales Bot with no webhook configured');
   config.botUsername = identity.username;
+  config.botId = identity.id;
   const staffdayTrial = config.trialApi && staffdayTrialClient(config.trialApi);
   const luyvioTrial = config.luyvioTrialApi && luyvioTrialClient(config.luyvioTrialApi);
   mkdirSync(config.dataDir, { recursive: true, mode: 0o700 });
@@ -23,7 +25,9 @@ async function start() {
   const abort = new AbortController();
   const { signal } = abort;
   const catalog = catalogHandler({ config, bot });
+  const qr = config.khqr && khqrHandler({ config, store, shop: bot.shop });
   const server = createServer({requestTimeout: 15_000}, (req, res) => {
+    if (qr && req.url?.startsWith('/web-shop/')) return void qr(req, res);
     if (catalog && req.url?.startsWith('/catalog/')) return void catalog(req, res);
     const health = req.method === 'GET' && req.url === '/health';
     res.writeHead(health ? (signal.aborted ? 503 : 200) : 404, { 'Content-Type': 'application/json' });
@@ -34,7 +38,7 @@ async function start() {
   server.listen(config.port, '0.0.0.0');
   console.log('Dalin sales bot is running as @' + identity.username);
   const context = { store, bot, telegram, notion, staffdayTrial, luyvioTrial, config };
-  const jobTypes = ['telegram', 'notion', 'refund'];
+  const jobTypes = ['telegram', 'notion', 'refund', 'shop-promo', 'shop-refund', 'shop-qr'];
   if (staffdayTrial) jobTypes.push('staffday');
   if (luyvioTrial) jobTypes.push('luyvio');
   const jobs = [poll(store, bot, telegram, signal), ...jobTypes.map(type => worker(context, type, signal))];

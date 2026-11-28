@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 
-const TABLES = new Set(['leads', 'tasks', 'orders', 'drafts']);
+const TABLES = new Set(['leads', 'tasks', 'orders', 'drafts', 'shop_products', 'shop_promos', 'shop_threads', 'shop_messages', 'shop_orders', 'shop_requests', 'shop_qr']);
 
 export function openStore(path) {
   const db = new DatabaseSync(path);
@@ -75,7 +75,7 @@ export function openStore(path) {
     save(kind, record, time) {
       if (!TABLES.has(kind)) throw new Error('Unknown record kind');
       set.run(kind, String(record.id), JSON.stringify(record));
-      if (kind !== 'drafts') {
+      if (['leads', 'tasks', 'orders'].includes(kind)) {
         markDirty.run('notion:' + kind + ':' + record.id, JSON.stringify({ kind, id: record.id }), time);
       }
       return record;

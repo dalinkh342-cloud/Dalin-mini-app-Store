@@ -1,6 +1,8 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { DAY } from './config.js';
 import { syncNotion } from './notion.js';
+import { runShopJob } from './shop.js';
+import { runKhqrJob } from './khqr.js';
 
 const expiryKeys = ['stage', 'trialEnd', 'paidUntil'];
 
@@ -78,6 +80,11 @@ export async function runJob({ store, bot, telegram, notion, staffdayTrial, luyv
   if (!job) return false;
   const payload = job.payload;
   try {
+    if (type === 'shop-qr') { await runKhqrJob({ store, config, shop: bot.shop, now }, job); return true; }
+    if (type === 'shop-promo' || type === 'shop-refund') {
+      await runShopJob({ store, bot, telegram, config, now }, job);
+      return true;
+    }
     const validOrder = !payload.pendingOrder || store.get('orders', payload.pendingOrder)?.status === 'pending';
     if (type === 'telegram' && validOrder && (!payload.condition || conditionMatches(store, payload.condition, now()))) {
       try {

@@ -80,7 +80,27 @@ export function loadConfig(env = process.env) {
     }
     catalogOrigin = url.origin;
   }
+  const promotionsChat = env.PROMOTIONS_CHANNEL?.trim() || '';
+  if (promotionsChat && !/^(@[A-Za-z][A-Za-z0-9_]{4,31}|-100\d+)$/.test(promotionsChat)) {
+    throw new Error('PROMOTIONS_CHANNEL must be a Telegram channel username or ID');
+  }
+  if (promotionsChat && promotionsChat === env.SALES_CHAT_ID?.trim()) throw new Error('Use a separate promotions channel');
+  const web = env.KHQR_WEB_ORIGIN?.trim();
+  const merchantId = env.PAYWAY_MERCHANT_ID?.trim();
+  const apiKey = env.PAYWAY_API_KEY?.trim();
+  let khqr;
+  if (web || merchantId || apiKey) {
+    const origin = URL.parse(web || '');
+    const mode = env.PAYWAY_MODE?.trim() || 'sandbox';
+    if (!origin || origin.protocol !== 'https:' || origin.username || origin.password ||
+        origin.pathname !== '/' || origin.search || origin.hash || origin.origin === catalogOrigin ||
+        !merchantId || !apiKey || !['sandbox', 'production'].includes(mode)) {
+      throw new Error('KHQR requires a distinct HTTPS web origin, PayWay merchant settings, and a valid mode');
+    }
+    khqr = { origin: origin.origin, merchantId, apiKey, mode };
+  }
   return {
+    promotionsChat, khqr,
     token: requireSetting(env, 'BOT_TOKEN', value => /^\d+:[\w-]+$/.test(value ?? '')),
     salesChat: requireSetting(env, 'SALES_CHAT_ID', value => /^-\d+$/.test(value ?? '')),
     owners,
