@@ -1,5 +1,7 @@
 # Dalin Mini Apps Sales Bot
 
+[របៀបប្រើផ្ទាំងហាង ប្រូម៉ូសិន និង KHQR](SHOP_SETUP_KH.md)
+
 Telegram Bot សម្រាប់លក់ StaffDay, Inventra, Luyvio និង FleetDay។ អតិថិជនអាចមើលផលិតផល ផ្ញើសំណួរ និងស្នើ Trial សម្រាប់ StaffDay។ អ្នកលក់ និង Owner ប្រើក្រុម Telegram ឯកជនដើម្បីទទួលសំណើ កត់ការផ្ទៀងផ្ទាត់ HR តាមដាន Trial និងគ្រប់គ្រងការបន្តប្រើ។
 
 - **Telegram** ទទួលសំណើ បង្ហាញ Demo ផ្ញើសាររំលឹក និងគាំទ្រ។ ប្រើ Bot សម្រាប់លក់ដាច់ដោយឡែក។

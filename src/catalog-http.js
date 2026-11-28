@@ -8,6 +8,8 @@ const files = {
   '': ['index.html', 'text/html; charset=utf-8'],
   'catalog.css': ['catalog.css', 'text/css; charset=utf-8'],
   'catalog.js': ['catalog.js', 'text/javascript; charset=utf-8'],
+  'shop-ui.js': ['shop-ui.js', 'text/javascript; charset=utf-8'],
+  'shop-ui.css': ['shop-ui.css', 'text/css; charset=utf-8'],
   'staffday.webp': ['staffday.webp', 'image/webp'],
   'inventra.webp': ['inventra.webp', 'image/webp'],
   'luyvio.webp': ['luyvio.webp', 'image/webp'],
@@ -88,6 +90,14 @@ export function catalogHandler({ config, bot }) {
         const profile = telegramProfile(body.initData, config.token);
         if (!profile) return json(res, 401, { error: 'telegram_session' });
         const { action, language, requestId } = body;
+        if (action === 'shop-open-bot' && bot.shop.isLive(body.product) &&
+            /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(requestId || '')) {
+          return json(res, 200, bot.catalogAction({ profile, action: body.product, requestId }));
+        }
+        if (typeof action === 'string' && action.startsWith('shop-')) {
+          const answer = bot.shop.api(String(profile.id), body);
+          return json(res, answer.status, answer.body);
+        }
         const valid = action === 'session' || (action === 'language' && languages.has(language)) ||
           (chatActions.has(action) && typeof requestId === 'string' &&
             /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(requestId));
@@ -101,8 +111,8 @@ export function catalogHandler({ config, bot }) {
       res.writeHead(200, {
         'Content-Type': type,
         'Content-Length': content.length,
-        'Cache-Control': path ? 'public, max-age=3600' : 'no-cache',
-        'Content-Security-Policy': "default-src 'none'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self' https://web.telegram.org",
+        'Cache-Control': path && !path.startsWith('shop-ui.') ? 'public, max-age=3600' : 'no-cache',
+        'Content-Security-Policy': "default-src 'none'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' https:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'self' https://web.telegram.org",
       });
       res.end(req.method === 'HEAD' ? undefined : content);
     } catch (error) {

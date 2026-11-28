@@ -3,6 +3,8 @@ import { DAY, formattedDate, localDateEnd, positiveInteger } from './config.js';
 import { canChooseTrialHr, handleTrialHr, hrChoiceButtons, preparingTrial } from './trial-approval.js';
 import { approveLuyvio, handleLuyvioCustomer, showLuyvioLead } from './luyvio-trial.js';
 
+import { createShop } from './shop.js';
+
 const PRODUCTS = {
   staffday: { name: 'StaffDay', prefix: 'SD', details: 'កត់វត្តមានតាមទីតាំង ស្នើសុំឈប់សម្រាក និងទាញរបាយការណ៍ HR។', en: 'Record attendance by location, request leave and download HR reports.' },
   inventra: { name: 'Inventra', prefix: 'IN', details: 'គ្រប់គ្រងទំនិញចូលចេញ ស្តុក ទ្រព្យសម្បត្តិ និង QR។', en: 'Manage stock movements, inventory and assets with QR codes.' },
@@ -20,10 +22,11 @@ const link = (text, url) => ({ text, url });
 const normalizeName = name => name.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
 const label = lead => lead.id + ' · ' + lead.company;
 const privateChat = chat => chat.type === 'private';
-const hasProduct = key => Object.hasOwn(PRODUCTS, key);
 const staffdayButtons = lead => ['trial', 'active'].includes(lead.stage);
 
 export function createBot(store, config, clock = Date.now) {
+  const shop = createShop({ store, config, clock, products: PRODUCTS });
+  const hasProduct = key => Boolean(key && shop.product(key));
   function queueTelegram(id, method, body, now, condition = undefined, pendingOrder = undefined) {
     store.queue('telegram', id, { method, body, condition, pendingOrder }, now);
   }
@@ -110,14 +113,14 @@ export function createBot(store, config, clock = Date.now) {
         ], catalogUrl + 'welcome.jpg?v=4apps');
       }
       return say(tr('សួស្តី! សូមជ្រើសកម្មវិធីសម្រាប់ការងារប្រចាំថ្ងៃរបស់អ្នក។', text), [
-        [callback('StaffDay', 'product:staffday'), callback('Inventra', 'product:inventra')],
-        [callback('Luyvio', 'product:luyvio'), callback('FleetDay', 'product:fleetday')],
+        ...shop.productsList().filter(row => row.status === 'live').slice(0, 20)
+          .map(row => [callback(row.name, 'product:' + row.id)]),
         [callback(myRequests, 'mine'), callback(contact, 'ask:general')],
       ]);
     };
     const product = (key, source) => {
-      if (!hasProduct(key)) return menu();
-      const entry = PRODUCTS[key];
+      if (!shop.isLive(key)) return menu();
+      const entry = shop.product(key);
       setDraft({ product: key, source, step: 'browse' });
       const buttons = [];
       if (key === 'staffday') {
@@ -126,14 +129,20 @@ export function createBot(store, config, clock = Date.now) {
       }
       if (key === 'luyvio' && config.luyvioTrialApi) buttons.push([callback(requestTrial, 'lu-start')]);
       if (key === 'fleetday' && config.fleetdayUrl) buttons.push([callback(tr('សាកល្បងឥតគិតថ្លៃ', 'Start free trial'), 'fd-trial')]);
+      if (entry.trialUrl) buttons.push([link(requestTrial, entry.trialUrl)]);
+      if (catalogUrl && config.stars && shop.starsQuote(key, now).amount) {
+        buttons.push([{ text: tr('មើលតម្លៃ និងទិញ', 'View price and buy'), web_app: { url: catalogUrl + '?product=' + key } }]);
+      }
       buttons.push([callback(contact, 'ask:' + key), callback(tr('ត្រឡប់', 'Back'), 'menu')]);
       let trial = key === 'staffday' ? '\n' + tr('សាកល្បង ' + config.trialDays + ' ថ្ងៃ។', config.trialDays + '-day trial.') +
-        (config.priceLabel ? '\n' + config.priceLabel : '') : '';
+        (config.priceLabel && !entry.stars ? '\n' + config.priceLabel : '') : '';
       if (key === 'fleetday' && config.fleetdayUrl) {
         const days = config.fleetdayTrialDays || 14;
         trial = '\n' + tr('សាកល្បងឥតគិតថ្លៃ ' + days + ' ថ្ងៃ — បង្កើតក្រុមហ៊ុនដោយខ្លួនឯងក្នុង FleetDay។', days + '-day free trial — set up your company yourself in FleetDay.');
       }
-      return say(entry.name + '\n' + tr(entry.details, entry.en) + trial, buttons);
+      const promo = config.stars && shop.activePromo(key, now);
+      if (promo) trial += '\n' + promo.regular + ' → ' + promo.stars + ' Stars · ' + formattedDate(promo.expires);
+      return say(entry.name + '\n' + tr(entry.km, entry.en) + trial, buttons);
     };
     const showLead = lead => {
       if (lead.product === 'luyvio') return showLuyvioLead(lead, { say, config, tr });
@@ -153,11 +162,20 @@ export function createBot(store, config, clock = Date.now) {
     };
 
     if (handleTrialHr({store, config, saveLead, queueTelegram, user, profile, data, input, say, now})) return;
+    if (data === 'lu-start' && !shop.isLive('luyvio')) return menu();
     if (handleLuyvioCustomer({ store, config, saveLead, queueTelegram, user, profile, data, input, say, now, tr })) return;
     if (/^\/start(?:\s|$)/.test(input)) {
       store.forget('drafts', user);
       const payload = input.split(/\s+/, 2)[1] || '';
-      const match = /^(staffday|inventra|luyvio|fleetday)(?:_([a-z0-9_-]{1,45}))?$/.exec(payload);
+      const promoMatch = /^promo_([a-f0-9]{16})$/.exec(payload);
+      if (promoMatch) {
+        const offer = store.get('shop_promos', promoMatch[1]);
+        if (offer?.state !== 'published' || offer.expires <= now || !config.stars) {
+          say(tr('ប្រូម៉ូសិននេះផុតកំណត់ ឬមិនទាន់អាចប្រើបាន។', 'This promotion is no longer available.'));
+        }
+        return offer && shop.isLive(offer.product) ? product(offer.product, 'promotion') : menu();
+      }
+      const match = /^([a-z][a-z0-9-]{1,23})(?:_([a-z0-9_-]{1,45}))?$/.exec(payload);
       return match ? product(match[1], match[2] || 'direct') : menu();
     }
     if (data === 'menu' || input === '/cancel') {
@@ -170,6 +188,8 @@ export function createBot(store, config, clock = Date.now) {
     }
     if (selectedLanguage) return menu();
     if (data?.startsWith('product:')) return product(data.split(':')[1], 'catalog');
+    if (data === 'fd-trial' && !shop.isLive('fleetday')) return menu();
+    if ((['demo', 'starttrial'].includes(data) || data?.startsWith('confirm:')) && !shop.isLive('staffday')) return menu();
     if (data === 'fd-trial') {
       if (!config.fleetdayUrl) return product('fleetday', 'direct');
       const who = [profile?.first_name, profile?.last_name].filter(Boolean).join(' ') || 'User';
@@ -275,7 +295,7 @@ export function createBot(store, config, clock = Date.now) {
       }, now);
       store.forget('drafts', user);
       dueMessage('task:' + ticket.id, config.salesChat, ticket.id + ' · ' + ticket.kind +
-        (ticket.product ? ' · ' + PRODUCTS[ticket.product].name : '') + '\n' + input +
+        (ticket.product ? ' · ' + (shop.product(ticket.product)?.name || ticket.product) : '') + '\n' + input +
         '\nឆ្លើយតប: /reply ' + ticket.id + ' សាររបស់អ្នក', now);
       return say(tr('បានទទួលសាររបស់អ្នក។ លេខតាមដាន ' + ticket.id + '។', 'Message received. Reference: ' + ticket.id));
     }
@@ -472,11 +492,18 @@ export function createBot(store, config, clock = Date.now) {
     if (!lead.companyCode || lead.stage === 'closed') return say('ត្រូវមាន Company Code ដែលកំពុងតាមដាន។');
     if (action === '/invoice') {
       if (!config.stars) return say('មុខងារ Telegram Stars មិនទាន់បើក។');
+      if (!shop.isLive('staffday')) return say('StaffDay មិនកំពុងដាក់លក់។');
+      const activeShopOrder = store.all('shop_orders').find(o => o.method === 'stars' && o.product === 'staffday' &&
+        o.buyer === lead.buyer && o.company.toLowerCase() === lead.company.toLowerCase() &&
+        ['pending', 'paid', 'refund_pending', 'review'].includes(o.status) &&
+        (o.status !== 'pending' || now - o.created < DAY));
+      if (activeShopOrder) return say('មាន Order ក្នុងហាងរួច · ' + activeShopOrder.id);
+      const quote = shop.starsQuote('staffday', now, shop.product('staffday').stars || config.starsAmount);
       const current = store.all('orders').find(row => row.leadId === lead.id &&
         ['pending', 'paid', 'payment_review', 'refund_pending'].includes(row.status));
       if (current) return say('មានការបញ្ជាទិញដែលកំពុងដំណើរការ ' + current.id + '។ ពិនិត្យ /failed ប្រសិនបើផ្ញើមិនបាន។');
       const order = store.save('orders', { id: store.serial('orders', 'ORD'), leadId: lead.id,
-        companyCode: lead.companyCode, buyer: lead.buyer, amount: config.starsAmount,
+        companyCode: lead.companyCode, buyer: lead.buyer, amount: quote.amount, promo: quote.promo,
         status: 'pending', created: now, updated: now, payload: randomUUID() }, now);
       queueTelegram('invoice:' + order.id, 'sendInvoice', {
         chat_id: order.buyer, title: 'StaffDay · 1 month',
@@ -538,6 +565,7 @@ export function createBot(store, config, clock = Date.now) {
   }
 
   return {
+    shop,
     recordLuyvioTrial(lead, result) {
       const now = clock();
       const updated = saveLead(lead, {
@@ -574,12 +602,18 @@ export function createBot(store, config, clock = Date.now) {
       return { ok: true };
     },
     precheckout(query) {
+      if (query.invoice_payload?.startsWith('ds:')) return shop.verifyCheckout(query);
       const now = clock();
       const user = String(query.from.id);
       const order = store.all('orders').find(row => row.payload === query.invoice_payload);
       const lead = order && store.get('leads', order.leadId);
+      const promo = shop.activePromo('staffday', now);
+      const renewalPrice = shop.product('staffday').stars;
+      const amountMatches = !order || ((!promo && !order.promo && !renewalPrice) ||
+        (order.precheckId === query.id && now - order.precheckedAt < 10 * 60_000) ||
+        (order.amount === (promo?.stars || renewalPrice) && (order.promo || null) === (promo?.id || null)));
       const dataMatches = config.stars && lead && lead.stage !== 'closed' && order.status === 'pending' &&
-        order.buyer === user && query.currency === 'XTR' && query.total_amount === order.amount;
+        shop.isLive('staffday') && amountMatches && order.buyer === user && query.currency === 'XTR' && query.total_amount === order.amount;
       const reserved = dataMatches && order.precheckId && order.precheckId !== query.id &&
         now - order.precheckedAt < 10 * 60_000;
       const ok = Boolean(dataMatches && !reserved);
@@ -603,14 +637,22 @@ export function createBot(store, config, clock = Date.now) {
       if (input === '/whoami' && privateChat(chat)) return say('Telegram User ID: ' + user);
       if (/^\/chatid(?:@\w+)?$/.test(input) && !privateChat(chat) &&
           (config.owners.has(user) || config.sellers.has(user))) return say('Telegram Chat ID: ' + chatId);
-      if (event.successful_payment && privateChat(chat)) return successfulPayment(user, event.successful_payment, now);
+      if (event.successful_payment && privateChat(chat)) {
+        const payment = event.successful_payment;
+        return payment.invoice_payload?.startsWith('ds:') ? shop.recordPayment(user, payment) : successfulPayment(user, payment, now);
+      }
       if (event.refunded_payment && privateChat(chat)) {
+        if (shop.recordRefund(event.refunded_payment.telegram_payment_charge_id, user)) return;
         const order = store.all('orders').find(row => row.charge === event.refunded_payment.telegram_payment_charge_id);
         if (order?.buyer === user) return this.recordRefund(order);
         return;
       }
-      if (chatId === config.salesChat && !privateChat(chat)) return processSales({ user, input, data, say, now });
-      if (privateChat(chat)) return processCustomer({ user, profile:event.from, input, data, say, now });
+      const conversation = { user, input, data, say, reply: event.reply_to_message };
+      if (chatId === config.salesChat && !privateChat(chat)) {
+        if (!shop.sellerReply(conversation)) return processSales({ user, input, data, say, now });
+        return;
+      }
+      if (privateChat(chat) && !shop.customerReply(conversation)) return processCustomer({ user, profile:event.from, input, data, say, now });
     },
     recordStaffDayTrial(lead, result) {
       const now = clock();

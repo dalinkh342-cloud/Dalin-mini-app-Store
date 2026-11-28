@@ -3,11 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="light dark">
   <title>Dalin Mini Apps</title>
   <link rel="stylesheet" href="catalog.css">
+  <link rel="stylesheet" href="shop-ui.css">
   <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-  <script type="module" src="catalog.js"></script>
+  <script type="module" src="shop-ui.js"></script>
 </head>
 <body>
   <header class="app-bar">
@@ -28,7 +29,7 @@
       </label>
     </div>
   </header>
-  <main class="shell content">
+  <main class="shell content"><div id="shop-root"><div hidden>
     <h1 data-copy="title">កម្មវិធីរបស់យើង</h1>
     <p class="intro" data-copy="intro">ជ្រើសកម្មវិធីសម្រាប់អាជីវកម្មរបស់អ្នក</p>
     <div class="products">
@@ -69,7 +70,8 @@
       <button type="button" data-action="mine" data-copy="mine">សំណើរបស់ខ្ញុំ</button>
       <button type="button" data-action="contact" data-copy="contact">ទាក់ទងក្រុមលក់</button>
     </div>
-    <p id="status" class="status" role="status" aria-live="polite" hidden></p>
+    </div></div><p id="status" class="status" role="status" aria-live="polite" hidden></p>
   </main>
+  <dialog id="shop-dialog" aria-labelledby="shop-dialog-title"></dialog>
 </body>
 </html>
